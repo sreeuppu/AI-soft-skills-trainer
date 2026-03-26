@@ -5,29 +5,20 @@ export async function POST(req) {
     const { userInput, profile, scenario } = await req.json();
     const apiKey = process.env.GEMINI_API_KEY; 
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // Using the Stable v1 endpoint for better reliability in the UK/EU
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
     const systemPrompt = `
       You are an elite Executive Leadership Coach. 
+      USER PROFILE: Role: ${profile.role}, Level: ${profile.level}, Industry: ${profile.industry}.
+      SCENARIO: ${scenario.headline}.
       
-      USER PROFILE:
-      - Role: ${profile.role}
-      - Level: ${profile.level}
-      - Industry: ${profile.industry}
-
-      SCENARIO:
-      ${scenario.headline} (${scenario.context})
-
-      TASK:
-      Evaluate the user's leadership response. 
-      - If the user is ${profile.level} level, be ${profile.level === 'Executive' ? 'extremely rigorous' : 'constructive but firm'}.
-      - Focus on: Framework Clarity, Ruthlessness, and Ownership.
-
-      Return ONLY a JSON object with this structure:
+      TASK: Evaluate the response. 
+      Return ONLY a JSON object:
       {
         "scores": { "Clarity": 0, "Ruthlessness": 0, "Ownership": 0 },
-        "feedback": "2-3 sentences of direct coaching for a ${profile.role}.",
-        "rewrite": "A one-sentence 'Executive Mode' version of their response."
+        "feedback": "2 sentences of coaching.",
+        "rewrite": "A one-sentence version."
       }
     `;
 
@@ -35,19 +26,28 @@ export async function POST(req) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: systemPrompt + "\n\nUSER RESPONSE: " + userInput }] }],
-        generationConfig: { response_mime_type: "application/json" }
+        contents: [{ parts: [{ text: systemPrompt + "\n\nUSER RESPONSE: " + userInput }] }]
       })
     });
 
     const data = await response.json();
-    if (data.error) throw new Error(data.error.message);
 
-    const result = JSON.parse(data.candidates[0].content.parts[0].text);
+    if (data.error) {
+      console.error("Gemini Error:", data.error.message);
+      return NextResponse.json({ error: data.error.message }, { status: 400 });
+    }
+
+    // CLEANING LOGIC: This prevents the "Page couldn't load" error
+    let rawText = data.candidates[0].content.parts[0].text;
+    
+    // Remove markdown blocks if Gemini includes them
+    const cleanJson = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+    
+    const result = JSON.parse(cleanJson);
     return NextResponse.json(result);
 
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: "AI Assessment failed" }, { status: 500 });
+    console.error("Server Error:", error);
+    return NextResponse.json({ error: "The AI took too long or sent back bad data." }, { status: 500 });
   }
 }
