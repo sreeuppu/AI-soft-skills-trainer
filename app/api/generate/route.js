@@ -5,43 +5,53 @@ export async function POST(req) {
     const { profile, focusArea } = await req.json();
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // Use v1beta and 1.5-flash for speed and reliability
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    if (!apiKey) return NextResponse.json({ error: "API Key missing" }, { status: 500 });
+
+    // List of models to try for the UK region
+    const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"];
 
     const prompt = `
       You are a leadership coach. Create a high-stakes scenario for a ${profile.level} ${profile.role}.
-      Topic: ${focusArea}.
+      Focus Area: ${focusArea}.
       
-      Return ONLY a JSON object with these EXACT keys:
+      Return ONLY JSON:
       {
-        "headline": "Describe a difficult situation in 1 sentence",
-        "context": "A quote from a stakeholder making a wrong/difficult request",
+        "headline": "A 1-sentence high-stakes problem statement.",
+        "context": "A quote from a difficult stakeholder pushing for the WRONG thing.",
         "stakeholderTitle": "Job title of the person speaking"
       }
     `;
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { response_mime_type: "application/json" }
-      })
-    });
+    for (const modelName of modelsToTry) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-    const data = await response.json();
-    
-    // Robust cleaning logic
-    let rawText = data.candidates[0].content.parts[0].text;
-    const cleanJson = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-    const result = JSON.parse(cleanJson);
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { response_mime_type: "application/json" }
+          })
+        });
 
-    return NextResponse.json(result);
+        if (response.ok) {
+          const data = await response.json();
+          const cleanJson = data.candidates[0].content.parts[0].text.replace(/```json/g, "").replace(/```/g, "").trim();
+          return NextResponse.json(JSON.parse(cleanJson));
+        }
+      } catch (e) {
+        console.warn(`Model ${modelName} failed, trying next...`);
+      }
+    }
+
+    throw new Error("All models failed to generate scenario.");
+
   } catch (error) {
-    console.error("Gen Error:", error);
+    console.error("Generator Error:", error.message);
     return NextResponse.json({ 
-        headline: "Error generating scenario", 
-        context: "Please try again in a moment.", 
+        headline: "Google API is busy", 
+        context: "Your quota might be low or the model is resetting. Try again in 30 seconds.", 
         stakeholderTitle: "System" 
     });
   }
